@@ -13,13 +13,13 @@ class SystemMonitor:
     def __init__(self, master):
         self.master = master
         self.master.title("System Monitor")
-        self.master.geometry("500x700")
+        self.master.geometry("520x750")
         self.master.style.theme_use("darkly")
         self.master.protocol("WM_DELETE_WINDOW", self.shutdown)
 
         self.running = True
         self.theme_is_dark = True
-        
+
         self.cpu_core_count = psutil.cpu_count(logical=True)
         self.per_cpu_prog = []
         self.per_cpu_val = []
@@ -34,11 +34,11 @@ class SystemMonitor:
     def build_ui(self):
         main_frame = tb.Frame(self.master, padding=(15, 15))
         main_frame.pack(fill=BOTH, expand=YES)
-        
+
         header_frame = tb.Frame(main_frame)
         header_frame.pack(fill=X, pady=(0, 10))
         header_frame.columnconfigure(1, weight=1)
-        tb.Label(header_frame, text="System Monitor", font=("Segoe UI", 20, "bold"), bootstyle=LIGHT).grid(row=0, column=1)
+        tb.Label(header_frame, text="🖥️ System Monitor", font=("Segoe UI", 22, "bold"), bootstyle=LIGHT).grid(row=0, column=1)
         self.theme_button = tb.Button(header_frame, text="☀️", command=self.toggle_theme, bootstyle="light-outline")
         self.theme_button.grid(row=0, column=2, sticky='e')
 
@@ -48,25 +48,25 @@ class SystemMonitor:
         # --- Tab 1: Overview ---
         f1 = tb.Frame(notebook, padding=10)
         f1.columnconfigure(1, weight=1)
-        self.cpu_prog, self.cpu_val, self.cpu_sparkline = self.create_metric_row(f1, "CPU (Total)", 0, "⚙️", with_sparkline=True)
-        self.ram_prog, self.ram_val, _ = self.create_metric_row(f1, "Memory", 2, "💾")
-        self.disk_prog, self.disk_val, _ = self.create_metric_row(f1, "Disk", 3, "💽")
-        self.battery_prog, self.battery_val, _ = self.create_metric_row(f1, "Battery", 4, "🔋")
-        tb.Separator(f1).grid(row=5, column=0, columnspan=3, sticky="ew", pady=15)
-        self.download_val = self.create_activity_row(f1, "Download", 6, "🡇")
-        self.upload_val = self.create_activity_row(f1, "Upload", 7, "🡅")
-        self.temp_val = self.create_activity_row(f1, "Temperature", 8, "🌡️")
-        self.proc_val = self.create_activity_row(f1, "Processes", 9, "🧠")
-        notebook.add(f1, text='  Overview  ')
+        self.cpu_prog, self.cpu_val, self.cpu_sparkline = self.create_metric_row(f1, "CPU Usage", 0, "⚙️", with_sparkline=True)
+        self.ram_prog, self.ram_val, _ = self.create_metric_row(f1, "Memory Usage", 2, "💾")
+        self.disk_prog, self.disk_val, _ = self.create_metric_row(f1, "Disk Usage", 3, "💽")
+        self.battery_prog, self.battery_val, _ = self.create_metric_row(f1, "Battery Level", 4, "🔋")
+        tb.Separator(f1).grid(row=5, column=0, columnspan=3, sticky="ew", pady=10)
+        self.download_val = self.create_activity_row(f1, "Download Speed", 6, "🡇")
+        self.upload_val = self.create_activity_row(f1, "Upload Speed", 7, "🡅")
+        self.temp_val = self.create_activity_row(f1, "CPU Temperature", 8, "🌡️")
+        self.proc_val = self.create_activity_row(f1, "Running Processes", 9, "🧠")
+        notebook.add(f1, text='📊 Dashboard')
 
         # --- Tab 2: Per-Core CPU ---
         f2 = tb.Frame(notebook, padding=10)
         f2.columnconfigure(1, weight=1)
         for i in range(self.cpu_core_count):
-            prog, val, _ = self.create_metric_row(f2, f"CPU Core {i+1}", i, "⚙️")
+            prog, val, _ = self.create_metric_row(f2, f"Core {i+1}", i, "⚙️")
             self.per_cpu_prog.append(prog)
             self.per_cpu_val.append(val)
-        notebook.add(f2, text='  Per-Core CPU  ')
+        notebook.add(f2, text='🧩 CPU Cores')
 
         # --- Tab 3: System Info ---
         f3 = tb.Frame(notebook, padding=15)
@@ -81,8 +81,8 @@ class SystemMonitor:
         self.create_info_row(f3, "Total RAM", self.format_bytes(ram.total), 5, "💾")
         self.create_info_row(f3, "Total Disk", self.format_bytes(disk.total), 6, "💽")
         self.uptime_label = self.create_info_row(f3, "System Uptime", self.get_uptime(), 7, "⏱️")
-        notebook.add(f3, text='  System Info  ')
-
+        notebook.add(f3, text='🛠️ System Info')
+        
     def create_metric_row(self, parent, label, row, icon, with_sparkline=False):
         tb.Label(parent, text=f"{icon} {label}", font=("Segoe UI", 12)).grid(row=row, column=0, sticky='w')
         val_label = tb.Label(parent, text="", font=("Segoe UI", 11, "bold"))
