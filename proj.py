@@ -34,8 +34,8 @@ class SystemMonitor:
     def __init__(self, master):
         self.master = master
         self.master.title("System Monitor")
-        self.master.geometry("500x700")
-        self.master.style.theme_use("darkly")
+        self.master.geometry("380x780")
+        self.master.configure(bg=BG_COLOR)
         self.master.protocol("WM_DELETE_WINDOW", self.shutdown)
 
         # --- Style Configuration ---
@@ -52,13 +52,6 @@ class SystemMonitor:
 
         # --- App State & Data ---
         self.running = True
-        self.theme_is_dark = True
-        
-        self.cpu_core_count = psutil.cpu_count(logical=True)
-        self.per_cpu_prog = []
-        self.per_cpu_val = []
-
-        self.cpu_data = deque(maxlen=30)
         self.data_queue = queue.Queue()
         self.process_lock = threading.Lock()
         self.top_processes = []
@@ -72,141 +65,183 @@ class SystemMonitor:
 
     # --- UI Construction ---
     def build_ui(self):
-        main_frame = tb.Frame(self.master, padding=(15, 15))
-        main_frame.pack(fill=BOTH, expand=YES)
+        self.notebook = tb.Notebook(self.master)
+        self.notebook.pack(fill=BOTH, expand=YES)
         
-        header_frame = tb.Frame(main_frame)
-        header_frame.pack(fill=X, pady=(0, 10))
-        header_frame.columnconfigure(1, weight=1)
-        tb.Label(header_frame, text="System Monitor", font=("Segoe UI", 20, "bold"), bootstyle=LIGHT).grid(row=0, column=1)
-        self.theme_button = tb.Button(header_frame, text="☀️", command=self.toggle_theme, bootstyle="light-outline")
-        self.theme_button.grid(row=0, column=2, sticky='e')
+        self.create_cpu_tab()
+        self.create_ram_tab()
+        self.create_gpu_tab()
+        self.create_battery_tab()
 
-        notebook = tb.Notebook(main_frame)
-        notebook.pack(fill=BOTH, expand=YES)
+    def create_cpu_tab(self):
+        cpu_frame = tb.Frame(self.notebook, padding=(20, 15))
+        self.notebook.add(cpu_frame, text=' CPU ')
 
-        # --- Tab 1: Overview ---
-        f1 = tb.Frame(notebook, padding=10)
-        f1.columnconfigure(1, weight=1)
-        self.cpu_prog, self.cpu_val, self.cpu_sparkline = self.create_metric_row(f1, "CPU (Total)", 0, "⚙️", with_sparkline=True)
-        self.ram_prog, self.ram_val, _ = self.create_metric_row(f1, "Memory", 2, "💾")
-        self.disk_prog, self.disk_val, _ = self.create_metric_row(f1, "Disk", 3, "💽")
-        self.battery_prog, self.battery_val, _ = self.create_metric_row(f1, "Battery", 4, "🔋")
-        tb.Separator(f1).grid(row=5, column=0, columnspan=3, sticky="ew", pady=15)
-        self.download_val = self.create_activity_row(f1, "Download", 6, "🡇")
-        self.upload_val = self.create_activity_row(f1, "Upload", 7, "🡅")
-        self.temp_val = self.create_activity_row(f1, "Temperature", 8, "🌡️")
-        self.proc_val = self.create_activity_row(f1, "Processes", 9, "🧠")
-        notebook.add(f1, text='  Overview  ')
+        gauge_frame = tb.Frame(cpu_frame)
+        gauge_frame.pack(fill=X, pady=(0, 20), anchor=W)
 
-        # --- Tab 2: Per-Core CPU ---
-        f2 = tb.Frame(notebook, padding=10)
-        f2.columnconfigure(1, weight=1)
-        for i in range(self.cpu_core_count):
-            prog, val, _ = self.create_metric_row(f2, f"CPU Core {i+1}", i, "⚙️")
-            self.per_cpu_prog.append(prog)
-            self.per_cpu_val.append(val)
-        notebook.add(f2, text='  Per-Core CPU  ')
+        self.temp_canvas = tk.Canvas(gauge_frame, width=70, height=70, bg=BG_COLOR, highlightthickness=0)
+        self.temp_canvas.pack(side=LEFT, padx=(0, 10))
 
-        # --- Tab 3: System Info ---
-        f3 = tb.Frame(notebook, padding=15)
-        f3.columnconfigure(1, weight=1)
-        ram = psutil.virtual_memory()
-        disk = psutil.disk_usage('/')
-        self.create_info_row(f3, "OS", f"{plat.system()} {plat.release()}", 0, "📦")
-        self.create_info_row(f3, "Architecture", f"{plat.machine()}", 1, "🏗️")
-        self.create_info_row(f3, "Hostname", f"{plat.node()}", 2, "🖥️")
-        self.create_info_row(f3, "CPU", f"{plat.processor()}", 3, "⚙️")
-        tb.Separator(f3).grid(row=4, columnspan=2, sticky="ew", pady=10)
-        self.create_info_row(f3, "Total RAM", self.format_bytes(ram.total), 5, "💾")
-        self.create_info_row(f3, "Total Disk", self.format_bytes(disk.total), 6, "💽")
-        self.uptime_label = self.create_info_row(f3, "System Uptime", self.get_uptime(), 7, "⏱️")
-        notebook.add(f3, text='  System Info  ')
+        self.cpu_canvas = tk.Canvas(gauge_frame, width=100, height=100, bg=BG_COLOR, highlightthickness=0)
+        self.cpu_canvas.pack(side=LEFT)
+        self.cpu_gauge = CircularGauge(self.cpu_canvas, radius=45, line_width=12, font_size=26)
 
-    def create_metric_row(self, parent, label, row, icon, with_sparkline=False):
-        tb.Label(parent, text=f"{icon} {label}", font=("Segoe UI", 12)).grid(row=row, column=0, sticky='w')
-        val_label = tb.Label(parent, text="", font=("Segoe UI", 11, "bold"))
-        val_label.grid(row=row, column=2, sticky='e', padx=(10, 0))
-        prog = tb.Progressbar(parent, bootstyle=SUCCESS, maximum=100, mode='determinate')
-        prog.grid(row=row, column=1, sticky='ew', padx=10)
+        tb.Label(cpu_frame, text="Usage history", style='Section.TLabel').pack(pady=(0, 10), fill=X)
+        self.cpu_sparkline = tk.Canvas(cpu_frame, height=70, bg=GRAPH_BG_COLOR, highlightthickness=0)
+        self.cpu_sparkline.pack(fill=X, pady=(0, 20), ipady=5)
+
+        tb.Label(cpu_frame, text="Details", style='Section.TLabel').pack(pady=(0, 10), fill=X)
+        details_frame = tb.Frame(cpu_frame)
+        details_frame.pack(fill=X, pady=(0, 20))
+        self.system_label = self.create_detail_row(details_frame, "System:", RED)
+        self.user_label = self.create_detail_row(details_frame, "User:", BLUE)
+        self.idle_label = self.create_detail_row(details_frame, "Idle:", GRAY)
         
-        spark_canvas = None
-        if with_sparkline:
-            parent.grid_rowconfigure(row + 1, weight=1)
-            spark_canvas = tb.Canvas(parent, height=25, highlightthickness=0)
-            spark_canvas.grid(row=row + 1, column=0, columnspan=3, sticky='ew', pady=(0, 8), padx=5)
-            
-        return prog, val_label, spark_canvas
+        tb.Label(cpu_frame, text="Top processes", style='Section.TLabel').pack(pady=(0, 10), fill=X)
+        process_frame = tb.Frame(cpu_frame)
+        process_frame.pack(fill=BOTH, expand=YES)
+        self.cpu_process_labels = [self.create_process_row(process_frame) for _ in range(7)]
+    
+    def create_ram_tab(self):
+        ram_frame = tb.Frame(self.notebook, padding=(20, 15))
+        self.notebook.add(ram_frame, text=' RAM ')
 
-    def create_activity_row(self, parent, label, row, icon):
-        tb.Label(parent, text=f"{icon} {label}", font=("Segoe UI", 12)).grid(row=row, column=0, sticky='w', pady=2)
-        val_label = tb.Label(parent, text="N/A", font=("Segoe UI", 12, "bold"))
-        val_label.grid(row=row, column=2, sticky='e', pady=2, padx=10)
-        return val_label
+        gauge_frame = tb.Frame(ram_frame)
+        gauge_frame.pack(fill=X, pady=(0, 20), anchor=W)
 
-    def create_info_row(self, parent, label, value, row, icon):
-        tb.Label(parent, text=f"{icon} {label}", font=("Segoe UI", 12)).grid(row=row, column=0, sticky='w', pady=2)
-        val_label = tb.Label(parent, text=value, font=("Segoe UI", 12, "bold"))
-        val_label.grid(row=row, column=1, columnspan=2, sticky='e', pady=2, padx=10)
-        return val_label
+        self.pressure_canvas = tk.Canvas(gauge_frame, width=70, height=70, bg=BG_COLOR, highlightthickness=0)
+        self.pressure_canvas.pack(side=LEFT, padx=(0, 10))
 
-    def draw_sparkline(self, canvas, data):
-        canvas.delete("all")
-        if len(data) < 2: return
-        width, height = canvas.winfo_width(), canvas.winfo_height()
-        if width < 2 or height < 2: return
-        max_val = max(data) or 100
+        self.ram_canvas = tk.Canvas(gauge_frame, width=100, height=100, bg=BG_COLOR, highlightthickness=0)
+        self.ram_canvas.pack(side=LEFT)
+        self.ram_gauge = CircularGauge(self.ram_canvas, radius=45, line_width=12, font_size=26)
+
+        tb.Label(ram_frame, text="Usage history", style='Section.TLabel').pack(pady=(0, 10), fill=X)
+        self.ram_sparkline = tk.Canvas(ram_frame, height=70, bg=GRAPH_BG_COLOR, highlightthickness=0)
+        self.ram_sparkline.pack(fill=X, pady=(0, 20), ipady=5)
         
-        points = []
-        for i, val in enumerate(data):
-            x = (i / (len(data) - 1)) * width
-            y = height - (val / max_val) * (height - 4)
-            points.extend([x, y])
+        tb.Label(ram_frame, text="Details", style='Section.TLabel').pack(pady=(0, 10), fill=X)
+        details_frame = tb.Frame(ram_frame)
+        details_frame.pack(fill=X, pady=(0, 20))
+        self.total_mem_label = self.create_detail_row(details_frame, "Total:")
+        self.app_mem_label = self.create_detail_row(details_frame, "App:", BLUE)
+        self.wired_mem_label = self.create_detail_row(details_frame, "Wired:", ORANGE)
+        self.compressed_mem_label = self.create_detail_row(details_frame, "Compressed:", RED)
+        self.free_mem_label = self.create_detail_row(details_frame, "Free:", GRAY)
 
-        color = self.master.style.colors.primary
-        canvas.create_line(points, fill=color, width=2, smooth=True)
+        tb.Label(ram_frame, text="Top processes", style='Section.TLabel').pack(pady=(0, 10), fill=X)
+        process_frame = tb.Frame(ram_frame)
+        process_frame.pack(fill=BOTH, expand=YES)
+        self.ram_process_labels = [self.create_process_row(process_frame) for _ in range(7)]
+
+    def create_gpu_tab(self):
+        self.gpu_widgets = {}
+        gpu_frame = tb.Frame(self.notebook, padding=(0, 15))
+        self.notebook.add(gpu_frame, text=' GPU ')
+
+        gpus_to_show = []
+        if GPUtil_imported and GPUtil.getGPUs():
+            for gpu in GPUtil.getGPUs(): gpus_to_show.append({'id': gpu.id, 'name': gpu.name})
+        else:
+            for i, name in enumerate(["GeForce RTX 4080", "Intel HD Graphics 630"]): gpus_to_show.append({'id': i, 'name': name})
+
+        for i, gpu_info in enumerate(gpus_to_show):
+            self.gpu_data[gpu_info['id']] = deque(maxlen=60)
+            self.create_gpu_card(gpu_frame, gpu_info['name'], gpu_info['id'])
+            if i < len(gpus_to_show) - 1:
+                tb.Separator(gpu_frame, style='custom.TSeparator').pack(fill=X, pady=20, padx=20)
+    
+    def create_gpu_card(self, parent, gpu_name, gpu_id):
+        card_frame = tb.Frame(parent, padding=(20, 0))
+        card_frame.pack(fill=X)
+
+        name_frame = tb.Frame(card_frame)
+        name_frame.pack(fill=X, pady=(0, 10))
+        name_frame.columnconfigure(0, weight=1)
+        name_frame.columnconfigure(2, weight=1)
         
-    def process_queue(self):
-        try:
-            while not self.data_queue.empty():
-                message = self.data_queue.get_nowait()
-                msg_type, data = message[0], message[1]
-                
-                if msg_type == 'cpu':
-                    overall, per_core = data
-                    self.cpu_data.append(overall)
-                    self.cpu_prog.configure(value=overall, bootstyle=self.get_bootstyle(overall))
-                    self.cpu_val.configure(text=f"{overall:.0f}%")
-                    self.draw_sparkline(self.cpu_sparkline, self.cpu_data)
-                    for i in range(self.cpu_core_count):
-                        self.per_cpu_prog[i].configure(value=per_core[i], bootstyle=self.get_bootstyle(per_core[i]))
-                        self.per_cpu_val[i].configure(text=f"{per_core[i]:.0f}%")
-                elif msg_type == 'ram':
-                    self.ram_prog.configure(value=data, bootstyle=self.get_bootstyle(data))
-                    self.ram_val.configure(text=f"{data:.0f}%")
-                elif msg_type == 'disk':
-                    self.disk_prog.configure(value=data, bootstyle=self.get_bootstyle(data))
-                    self.disk_val.configure(text=f"{data:.0f}%")
-                elif msg_type == 'network':
-                    d_speed, u_speed = data
-                    self.download_val.config(text=f"{d_speed:.1f} KB/s")
-                    self.upload_val.config(text=f"{u_speed:.1f} KB/s")
-                elif msg_type == 'battery':
-                    self.battery_val.configure(text=f"{data:.0f}%" if data is not None else "N/A")
-                    if data is not None:
-                        self.battery_prog.configure(value=data, bootstyle=self.get_bootstyle(data))
-                elif msg_type == 'processes':
-                    self.proc_val.config(text=f"{data}")
-                elif msg_type == 'temperature':
-                    self.temp_val.config(text=f"{data:.1f}°C" if data is not None else "No Sensor")
-                elif msg_type == 'uptime':
-                    self.uptime_label.configure(text=data)
+        tb.Label(name_frame, text=gpu_name, style='Section.TLabel').grid(row=0, column=1)
 
-        except queue.Empty:
-            pass
-        finally:
-            if self.running:
-                self.master.after(100, self.process_queue)
+        status_dot = tk.Canvas(name_frame, width=10, height=10, bg=BG_COLOR, highlightthickness=0)
+        status_dot.grid(row=0, column=2, sticky=W, padx=5)
+        status_dot.create_oval(2, 2, 8, 8, fill="green", outline="green")
+        
+        gauge_container = tb.Frame(card_frame)
+        gauge_container.pack(fill=X, pady=10)
+        gpu_temp_canvas = tk.Canvas(gauge_container, width=70, height=70, bg=BG_COLOR, highlightthickness=0)
+        gpu_temp_canvas.pack(side=LEFT, anchor=tk.N, padx=(0, 10))
+        gpu_usage_canvas = tk.Canvas(gauge_container, width=70, height=70, bg=BG_COLOR, highlightthickness=0)
+        gpu_usage_canvas.pack(side=LEFT, anchor=tk.N)
+
+        sparkline = tk.Canvas(card_frame, height=50, bg=GRAPH_BG_COLOR, highlightthickness=0)
+        sparkline.pack(fill=X, pady=10)
+
+        mem_frame = tb.Frame(card_frame)
+        mem_frame.pack(fill=X, pady=5)
+        mem_total_label = self.create_detail_row(mem_frame, "Memory Total:")
+        mem_used_label = self.create_detail_row(mem_frame, "Memory Used:")
+
+        self.gpu_widgets[gpu_id] = {
+            "sparkline": sparkline, "temp_canvas": gpu_temp_canvas, "usage_canvas": gpu_usage_canvas, 
+            "status_dot": status_dot, "mem_total": mem_total_label, "mem_used": mem_used_label
+        }
+
+    def create_battery_tab(self):
+        battery_frame = tb.Frame(self.notebook, padding=(20, 15))
+        self.notebook.add(battery_frame, text=' Battery ')
+        
+        self.battery_canvas = tk.Canvas(battery_frame, width=280, height=80, bg=BG_COLOR, highlightthickness=0)
+        self.battery_canvas.pack(pady=20)
+        tb.Separator(battery_frame, style='custom.TSeparator').pack(fill=X, pady=15)
+
+        details_grid = tb.Frame(battery_frame)
+        details_grid.pack(fill=X, pady=5)
+        self.batt_rows = {}
+        details_map = {
+            "Details": ["Level:", "Source:", "Time to discharge:", "Health:"],
+            "Battery": ["Amperage:", "Voltage:", "Temperature:"],
+            "Power adapter": ["Power:", "Is charging:"]
+        }
+        
+        row_counter = 0
+        for section, labels in details_map.items():
+            tb.Label(details_grid, text=section, style='Section.TLabel').grid(row=row_counter, column=0, columnspan=2, sticky="ew", pady=(10,5))
+            row_counter += 1
+            for label in labels: self.batt_rows[label] = self.create_info_row(details_grid, label, row_counter); row_counter += 1
+        
+        tb.Separator(battery_frame, style='custom.TSeparator').pack(fill=X, pady=15)
+        tb.Label(battery_frame, text="Top Processes", style='Section.TLabel').pack(pady=(10, 10), fill=X)
+        process_frame = tb.Frame(battery_frame)
+        process_frame.pack(fill=BOTH, expand=YES)
+        self.battery_process_labels = [self.create_process_row(process_frame) for _ in range(5)]
+
+    # --- Widget & Thread Helpers ---
+    def create_detail_row(self, parent, label_text, color=None):
+        row_frame = tb.Frame(parent)
+        row_frame.pack(fill=X, pady=3)
+        
+        if color:
+            canvas = tk.Canvas(row_frame, width=8, height=8, bg=BG_COLOR, highlightthickness=0)
+            canvas.create_rectangle(0, 0, 9, 9, fill=color, outline="")
+            canvas.pack(side=LEFT, padx=(0, 10), pady=4)
+
+        tb.Label(row_frame, text=label_text, style='Muted.TLabel').pack(side=LEFT)
+        value_label = tb.Label(row_frame, text="--", style='Value.TLabel')
+        value_label.pack(side=RIGHT)
+        return value_label
+
+    def create_info_row(self, parent, label_text, row_num):
+        parent.columnconfigure(1, weight=1)
+        tb.Label(parent, text=label_text, style='Muted.TLabel').grid(row=row_num, column=0, sticky=W, padx=5, pady=2)
+        value_label = tb.Label(parent, text="--", style='Value.TLabel'); value_label.grid(row=row_num, column=1, sticky=E, padx=5, pady=2)
+        return value_label
+
+    def create_process_row(self, parent):
+        row_frame = tb.Frame(parent); row_frame.pack(fill=X, pady=2)
+        name_label = tb.Label(row_frame, text="", anchor=W, style='Muted.TLabel'); name_label.pack(side=LEFT)
+        value_label = tb.Label(row_frame, text="", anchor=E, style='Value.TLabel'); value_label.pack(side=RIGHT)
+        return name_label, value_label
 
     def launch_threads(self):
         targets = [self.update_cpu, self.update_ram, self.update_gpu, self.update_battery, self.update_processes]
